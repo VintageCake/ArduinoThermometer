@@ -1,12 +1,12 @@
 /*
- * Projektarbete i datorteknik
- * Love Samuelsson, Dennis Söderberg
- * Programkod till arduino monterat på perfboard
- * 2018-10-12
- * 
- * Tar temperatur från en LM35, visar upp det med hjälp av en 7-seg display. Tryckknapp används för att byta mellan nuvarande/min/max temp. Håll i 1s för att återställa min/max.
- * 
- * (Old bootloader till kines-nanos)
+   Projektarbete i datorteknik
+   Love Samuelsson, Dennis Söderberg
+   Programkod till arduino monterat på perfboard
+   2018-10-12
+
+   Tar temperatur från en LM35, visar upp det med hjälp av en 7-seg display. Tryckknapp används för att byta mellan nuvarande/min/max temp. Håll i 1s för att återställa min/max.
+
+   (Old bootloader till kines-nanos)
 */
 
 #include <SevSeg.h>
@@ -59,7 +59,7 @@ const byte segmentPins[] = {13, 11, 7, 9, 10, 12, 6, 8}; // Pins för varje del 
 void setup()
 {
   Serial.begin(9600);
-  
+
   for (int i = 0; i < sizeof(digitalPins); i++) { // Initiering av digitalPins
     pinMode(digitalPins[i], OUTPUT);
   }
@@ -73,13 +73,13 @@ void setup()
 
   // For more information see: http://arduino.cc/en/Reference/AnalogReference
   analogReference(INTERNAL); // LM35 spottar ut som max 1v, därför om man sätter ner den interna analoga referensen så kan man få en högre upplösning på sin mätning. Man kan ej mäta mer än 1.1v om man sätter analogReference till internal. --> https://playground.arduino.cc/Main/LM35HigherResolution
-  
+
   sevseg.begin(COMMON_CATHODE, numDigits, digitalPins, segmentPins); // Definierar vilken typ av 7seg display som används, samt vilka pins de olika karaktärerna finns på.
   sevseg.setBrightness(70); // Ändrar ljusstrykan.
 }
 
 void loop() {
-/// Temperatur ( Tar fram temperaturen, tar fram vad som ska visas på displayen. )
+  /// Temperatur ( Tar fram temperaturen, tar fram vad som ska visas på displayen. )
   if ((CM - updateTimer) > updateDelay) { // Uppdaterar 'temp' vid ett visst intervall.
     temp = temp_sense(); // Hämtar temperatur från temperatur-funktionen.
 
@@ -91,7 +91,7 @@ void loop() {
     }
     timer2Flag = false; // Flagga som gör att timern börjar om igen.
   }
-  
+
   if (btnC == 0) { // Ifsats som hanterar vilken temperatur som ska visas till displayen. (Kan optimeras med flaggor, som gör att de dtostrf inte körs konstant - onödigt då displayen ser korrekt ut.)
     set_temp(temp); // Omvandling till en char-array. Ser till att displayen visar börjar med den första siffran i det första segmentet.
     light_RGB(LOW, LOW, LOW);
@@ -104,22 +104,11 @@ void loop() {
     set_temp(maxTemp);
     light_RGB(LOW, HIGH, LOW); // G = on
   }
-/// Temperatur
+  ///
 
-  if (((CM - sendTimer) > sendDelay) && sendFlag == true) { /// Ifsats som kontrollerar när arduinon skickar temperatur-data till seriell
-    Serial.print(temp, 1);
-    Serial.println(" C");
-    timer1Flag = false; // Resettar en timer
-  }
-  if (Serial.available()) {
-    if (Serial.read() == 'T') {
-      Serial.println("!");
-      sendFlag = true;
-    }
-  }
+  checkSerial(); // Void som hanterar allt som har med det seriella att göra.
 
-  
-/// Start av timers
+  /// Start av timers
   if (timer1Flag == false) {
     sendTimer = CM;
     timer1Flag = true;
@@ -128,27 +117,13 @@ void loop() {
     updateTimer = CM;
     timer2Flag = true;
   }
-/// Start av timers
-  
-/// Knappkod
-  byte btnReading = digitalRead(buttonPin);
-  if (btnReading != lastButtonState) {
-    lastDebounceTime = CM;
-  }
-  if ((CM - lastDebounceTime) > debounceDelay) { // Button debounce, praktiskt taget en kopia av exemplet "Debounce"
-    if (btnReading != buttonState) { //När en ändring sker i knappen, fortsätt
-      buttonState = btnReading;
-      if (buttonState == LOW) { // Om knäppen == HIGH, fortsätt
-        btnC = (btnC + 1) % 3;
-        buttonPressed = true;
-      }
-      else buttonPressed = false;
-    }
-  }
-  lastButtonState = btnReading;
-/// Knappkod
+  ///
 
-/// Reset ( Deteketerar ett långt knapptryck, samt resettar min/max när ett långt knapptryck kännes. )
+  /// Knappkod
+  checkButton();
+  ///
+
+  /// Reset ( Deteketerar ett långt knapptryck, samt resettar min/max när ett långt knapptryck kännes. )
   if (buttonPressed == 1) {
     if (btnFlag == false) {
       btnTimer = CM;
@@ -173,13 +148,9 @@ void loop() {
     resetFlag = false;
     minmax_rst();
   }
-/// Reset
+  ///
 
-/// Uppdaterar display och nuvarande timer
-  sevseg.setChars(tempChar); // Gör så att sevseg-funktionen håller tempchar vid varje display-refresh.
-  sevseg.refreshDisplay();
-  CM = millis();
-/// Uppdaterar display och nuvarande timer
+  refresh();   // Uppdaterar display och nuvarande timer
 }
 
 double temp_sense() { // Returnerar ett celciusvärde genom att läsa en LM35.
@@ -188,13 +159,51 @@ double temp_sense() { // Returnerar ett celciusvärde genom att läsa en LM35.
     reading += analogRead(thermoPin);
     sevseg.refreshDisplay();
   }
-  return (reading / 10 *(referenceVoltage / 1023)) * 100; // Reading/10 = ADC-v 0-1023, *(referenceVoltage/1023) = spänning i volt * 100 = spänning i 10^-2 volt, dvs 1 = 10mV. Enligt LM35 så är 1C = 10mV.
+  return (reading / 10 * (referenceVoltage / 1023)) * 100; // Reading/10 = ADC-v 0-1023, *(referenceVoltage/1023) = spänning i volt * 100 = spänning i 10^-2 volt, dvs 1 = 10mV. Enligt LM35 så är 1C = 10mV.
+}
+
+void checkSerial() {
+  if (((CM - sendTimer) > sendDelay) && sendFlag == true) { /// Ifsats som kontrollerar när arduinon skickar temperatur-data till seriell
+    Serial.print(temp, 1);
+    Serial.println(" C");
+    timer1Flag = false; // Resettar en timer
+  }
+  if (Serial.available()) { // En simpel ifsats som funkar som en enkel handskakning, om ett "T" skickas till arduinon genom den seriella porten, så kommer arduinon skicka tillbaka ett utropstecken.
+    if (Serial.read() == 'T') {
+      Serial.println("!");
+      sendFlag = true; // Flagga som signalerar att det är dags att börja skicka temperatur-data.
+    }
+  }
+}
+
+void checkButton() {
+  byte btnReading = digitalRead(buttonPin);
+  if (btnReading != lastButtonState) {
+    lastDebounceTime = CM;
+  }
+  if ((CM - lastDebounceTime) > debounceDelay) { // Button debounce, praktiskt taget en kopia av exemplet "Debounce"
+    if (btnReading != buttonState) { //När en ändring sker i knappen, fortsätt
+      buttonState = btnReading;
+      if (buttonState == LOW) { // Om knäppen == HIGH, fortsätt
+        btnC = (btnC + 1) % 3;
+        buttonPressed = true;
+      }
+      else buttonPressed = false;
+    }
+  }
+  lastButtonState = btnReading;
 }
 
 void light_RGB(int r, int g, int b) { // Funktion som tänder vissa led-lampor.
   digitalWrite(ledPins[0], r);
   digitalWrite(ledPins[1], g);
   digitalWrite(ledPins[2], b);
+}
+
+void refresh() {
+  sevseg.setChars(tempChar); // Gör så att sevseg-funktionen håller tempchar vid varje display-refresh.
+  sevseg.refreshDisplay();
+  CM = millis();
 }
 
 void minmax_rst() { // Resettar min/max till akutell temperatur
